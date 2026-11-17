@@ -85,7 +85,7 @@ Start every run with Minus → Scripts → savesync.
 - [ ] **After a newer release is published, `Update script...` and confirm.**
   Expected: the offer names both versions; then `Updated to <new>. Run savesync again to use it.`
   The next start shows `SaveSync <new>` in the first dialog. This also checks the FAT path of the
-  rename (moving the old script aside), which the PC tests cannot reach.
+  rename (moving the old script aside) on a real card; the PC tests only simulate it.
 
 ## Open item 1
 

@@ -101,11 +101,18 @@ on confirm downloads that release's `scripts/savesync.c`. It replaces the instal
 after checking that the download is SaveSync of that version. The new version runs from the next
 start.
 
+On the Switch's SD card a rename cannot replace a file, so the update first moves the installed
+script to `sdmc:/switch/Checkpoint/savesync/installed.old` and puts it back if the new one cannot
+take its place. If an update ever leaves no `savesync.c` in `scripts/universal/`, copy
+`savesync/installed.old` there and name it `savesync.c`. Do it before you start any other copy of
+the script: every run empties `savesync/`.
+
 **Releasing a new version:**
 
 1. Set `#define SAVESYNC_VERSION` in `scripts/savesync.c` to the new tag, e.g. `"v0.2.0"`.
-2. Commit, tag `v0.2.0` and push the tag.
-3. Publish a GitHub release for that tag (not a draft or a pre-release, which `releases/latest`
+2. Run `make test`. Release only when it passes.
+3. Commit, tag `v0.2.0` and push the tag.
+4. Publish a GitHub release for that tag (not a draft or a pre-release, which `releases/latest`
    does not return).
 
 The repository must stay public: the console downloads the script without logging in.
@@ -124,10 +131,11 @@ git submodule update --init --recursive
 make test                           # lint + build/hostrun + pytest
 ```
 
-`make lint` checks the script with Checkpoint's own parser. Two hostrun flags give the tests the
-failures a fake server cannot cause: `--abort-during unzip` (or `zip`) presses hold-B while that
-binding runs, and `--fail-close <path part>` makes `fclose` fail for matching files, as a full SD
-card would. The design is in
+`make lint` checks the script with Checkpoint's own parser. Three hostrun flags give the tests the
+conditions a fake server cannot make: `--abort-during unzip` (or `zip`) presses hold-B while that
+binding runs, `--fail-close <path part>` makes `fclose` fail for matching files, as a full SD card
+would, and `--fat-rename` makes `rename` refuse an existing destination, as the Switch's FAT card
+does. The design is in
 [docs/superpowers/specs/2026-11-12-savesyncnx-design.md](docs/superpowers/specs/2026-11-12-savesyncnx-design.md),
 the implementation plan and every deviation from it in
 [docs/superpowers/plans/2026-11-12-savesyncnx.md](docs/superpowers/plans/2026-11-12-savesyncnx.md),

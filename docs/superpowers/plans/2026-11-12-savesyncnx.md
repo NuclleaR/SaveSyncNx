@@ -64,6 +64,7 @@
 | Keyboards | `Koofr email` · `Koofr app password` · `Profile name (A-Z, 0-9, space, - or _)` |
 | Bad profile name | `Use 1-24 Latin letters, digits, spaces, - or _.` |
 | Duplicate profile | `That name is already in the list.` |
+| Profile name with a space at the start or end | `The name must not start or end with a space.` (owner, 2026-11-17) |
 | Settings menu | prompt `Settings`; items `Change email and app password`, `Test connection` |
 | Test: 207 | `Connected to Koofr as <email>.` |
 | Test: 401 | `Koofr rejected the email or app password (401).\nUse an app password from Koofr's settings,\nnot the account password.` |
@@ -597,7 +598,7 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
   - `the script could not be written to the SD card`: the download could not be written or moved into place.
   A repo with no release yet answers 404, which reads `GitHub could not be reached (404)`.
 - **Task 12 — the check is made in memory,** before anything is written: only a body that holds `#define SAVESYNC_VERSION "<tag>"` is written to `savesync/update.c` and renamed into place.
-- **Task 12 — FAT rename:** `install_script` tries a plain `rename` first (it replaces on the PC). If that is refused, it moves the installed script aside to `savesync/installed.old`, renames the new one in, and moves the old one back if that fails. The PC tests reach only the first branch; the console check covers the second.
+- **Task 12 — FAT rename:** `install_script` tries a plain `rename` first (it replaces on the PC). If that is refused, it moves the installed script aside to `savesync/installed.old`, renames the new one in, and moves the old one back if that fails. The PC tests reached only the first branch at first; since 2026-11-17 hostrun's `--fat-rename` reaches the second too (`test_confirm_replaces_script_on_fat`), and the console check confirms it on a real card.
 - **Task 12 — test safety:** `conftest.py` points `GITHUB_API` and `GITHUB_RAW` at `http://127.0.0.1:9/no-github` unless a test serves its own fakes, so no test ever reaches the real GitHub. Task 6's `test_update_entry_returns_to_dialog` now answers the "could not be reached" message instead of checking the `update` stub.
 - **Task 12 — fakedav** records every request's headers in `.request_headers` (`test_user_agent_sent` checks `User-Agent: savesync` and that no `Authorization` header goes to GitHub). Tests beyond the plan: `test_confirm_installs_when_folder_missing`, `test_no_release_yet`, `test_download_unreachable`, `test_release_without_usable_tag` (written after the code).
 - **Task 13 — README:** the "hidden games" limitation is written as what is known: only the games in Checkpoint's list for the selected user are backed up. Added two lines the plan did not list: what is checked of an upload after it lands (see the owner's decision below), and the free SD space a run needs. Releasing names a published release, not a draft or pre-release, which `releases/latest` does not return.
@@ -616,3 +617,14 @@ The whole-project review found one critical and two important defects; the owner
 - **Owner: one failed transfer.** After a transfer error or a 401/403 in the middle of a run, `recheck_koofr` sends one PROPFIND (Depth 0) of `SaveSyncNx/`; on 207 only that save fails and the run goes on, otherwise it stops with the reason. Never for 507. `test_network_lost_mid_run_stops_run` now loses the network for good (fakedav `fail_from`); `test_dropped_move_retried_next_run` now expects `1 uploaded, 0 unchanged, 1 failed`, then `1 uploaded, 1 unchanged`. New tests `test_login_lost_mid_run_stops_run`, `test_one_dropped_put_fails_only_that_game`, `test_one_forbidden_put_fails_only_that_game`; `test_quota_full_stops_run` checks that no recheck is sent.
 - **Owner: a fresh install** stays as designed (the first run backs up; Restore from the second run). README says so under Limitations.
 - **Docs:** `docs/console-check.md` — the wrong-password line now expects the connection test's 401 message after typing, then the run-stop message; new lines for hold-B during the unzip, a name with `'`/`&`/`#`/`%`, a non-Latin name, Wi-Fi lost mid-run and a fresh install. The README has a "When something fails" paragraph, and the Stopping paragraph covers Restore.
+
+### Deferred minors, fixed (2026-11-17)
+
+The owner asked to go on after the fix pass; these are the review's minor findings.
+
+- **#10 profile names with a space at the start or the end** (or of spaces only) are refused: `profile_name_check` returns -2 and the keyboard shows `The name must not start or end with a space.` (owner's choice over trimming). Tests `test_name_check_rules` (extended), `test_edge_spaces_refused`.
+- **#12 `tag_ok`** refuses the tags `.` and `..`, which as a URL segment would leave the release's folder. Test `test_release_without_usable_tag` (two more cases).
+- **#14 a fingerprint that cannot be saved after an upload** is logged: `the fingerprint could not be saved; the next run uploads this save again`. The upload still counts. Test `test_unsaved_state_logged`.
+- **#9 FAT rename on the PC:** hostrun's `--fat-rename` wraps `rename` to refuse an existing destination (`test_fat_rename_refuses_existing_destination` proves the flag). `test_set_on_fat_replaces_the_file` and `test_confirm_replaces_script_on_fat` reach the FAT branches of `state_set` and `install_script`; both passed at once, since the code was already there.
+- **#8** `chomp` now comes before its first caller, `state_load`.
+- **#7, #13 README:** how to recover the script from `savesync/installed.old`, and `make test` as a step before tagging a release.

@@ -153,6 +153,15 @@ def test_ascii_title_folder_is_checkpoints(backup, catalog, dav):
     assert zips(dav, "saves", f"0x{tid} Luigi's Mansion 3 & #1 50%  Go") == [f"{STAMP1} Serhii.zip"]
 
 
+def test_unsaved_state_logged(backup, catalog, dav):
+    # the version is in Koofr, but its fingerprint did not reach the SD card:
+    # the log must say the next run uploads it again
+    catalog.add(G1[0], G1[1], "account", {"/save.bin": b"one"})
+    r = backup(faults=["--fail-close", "savesync-state.txt.tmp"])
+    assert r.ui[-1]["prompt"] == summary(1, 0, 0)
+    assert "  the fingerprint could not be saved; the next run uploads this save again" in r.output
+
+
 def test_unflushed_dump_counts_failed(backup, catalog, dav):
     # the SD card fails the final flush of a copied save file: the copy may
     # be short, so it must not become a version

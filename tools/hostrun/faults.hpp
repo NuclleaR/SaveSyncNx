@@ -17,4 +17,8 @@ namespace Faults {
 
     // fclose returns EOF for every file whose path contains `part`.
     void failClose(const std::string& part);
+
+    // rename refuses an existing destination, as the Switch's FAT SD card
+    // does (on the PC it would replace it).
+    void fatRename(void);
 }

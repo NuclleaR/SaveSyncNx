@@ -215,7 +215,8 @@ SaveSyncNx/.incoming/<unique>.zip                    uploads in progress
   no names yet (after Settings on the first run), it goes to the keyboard for the first name.
 - A profile name may hold Latin letters, digits, space, `-` and `_` (it goes into file names on the
   card and the server); anything else, or a name equal to an existing one ignoring case, is refused
-  with a message (designer's call).
+  with a message (designer's call). A space at the start or the end, which would be invisible in the
+  file names, is refused with its own message (owner, 2026-11-17).
 - Names are kept in a small, non-secret config file on SD.
 - Picking the wrong name labels that run's account saves with the other person's name, permanently
   (nothing is deleted automatically); the owner fixes it by hand in Koofr. Device saves are not

@@ -3,10 +3,11 @@
  * and bindings, against a fake console.
  *
  *   hostrun --catalog <catalog.json> --answers <answers.json> --result <result.json>
- *           [--abort-during <zip|unzip>] [--fail-close <path part>] <script.c>
+ *           [--abort-during <zip|unzip>] [--fail-close <path part>] [--fat-rename] <script.c>
  *
  * --abort-during presses hold-B while that binding runs; --fail-close makes
- * fclose fail for files whose path contains the part (see faults.hpp).
+ * fclose fail for files whose path contains the part; --fat-rename makes
+ * rename refuse an existing destination, as FAT does (see faults.hpp).
  *
  * The working directory is the fake SD card: it holds a real directory named
  * "sdmc:", so "sdmc:/switch/Checkpoint/..." resolves inside it. The script runs
@@ -124,6 +125,9 @@ int main(int argc, char** argv)
         else if (arg == "--fail-close" && i + 1 < argc) {
             Faults::failClose(argv[++i]);
         }
+        else if (arg == "--fat-rename") {
+            Faults::fatRename();
+        }
         else if (scriptPath.empty() && arg.rfind("--", 0) != 0) {
             scriptPath = arg;
         }
@@ -134,7 +138,7 @@ int main(int argc, char** argv)
     }
     if (catalogPath.empty() || answersPath.empty() || resultPath.empty() || scriptPath.empty()) {
         fprintf(stderr, "usage: hostrun --catalog <catalog.json> --answers <answers.json> --result <result.json>\n"
-                        "               [--abort-during <zip|unzip>] [--fail-close <path part>] <script.c>\n");
+                        "               [--abort-during <zip|unzip>] [--fail-close <path part>] [--fat-rename] <script.c>\n");
         return RUNNER_ERROR;
     }
 

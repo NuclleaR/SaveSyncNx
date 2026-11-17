@@ -54,6 +54,16 @@ def test_set_is_atomic_rename(run_unit, sd):
     assert not (state_file(sd).parent / "savesync-state.txt.tmp").exists()
 
 
+def test_set_on_fat_replaces_the_file(run_unit, sd):
+    # FAT's rename refuses an existing file: the state file is removed first
+    r = run_unit(f'init_paths();\n    state_load();\n    state_set("{KEY_A}", "1:2:abcd0123");\n'
+                 f'    printf("set=%d\\n", state_set("{KEY_A}", "5:6:ffffffff"));', faults=["--fat-rename"])
+    assert "set=1" in r.output, r.output
+    r = run_unit('init_paths();\n    state_load();\n' + show(KEY_A))
+    assert f"{KEY_A}=5:6:ffffffff" in r.output
+    assert not (state_file(sd).parent / "savesync-state.txt.tmp").exists()
+
+
 def test_leftover_tmp_is_recovered(run_unit, sd):
     tmp = state_file(sd).parent / "savesync-state.txt.tmp"
     tmp.parent.mkdir(parents=True)

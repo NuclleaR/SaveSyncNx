@@ -47,7 +47,7 @@ HOST_WRAP := -Wl,--wrap=ckpt_console_write \
              -Wl,--wrap=_ZN14ScriptUiBridge9setStatusENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE \
              -Wl,--wrap=_ZN13ScriptConsole7beginIoENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEx \
              -Wl,--wrap=_ZN13ScriptConsole5addIoEx \
-             -Wl,--wrap=fopen -Wl,--wrap=fclose
+             -Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=rename
 HOST_LIBS := -lcurl -L$(MBEDTLS_LIB) -Wl,-rpath,$(MBEDTLS_LIB) -lmbedcrypto -lpthread -lm
 
 hostrun: $(HOSTRUN)

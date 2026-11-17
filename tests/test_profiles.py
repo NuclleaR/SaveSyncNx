@@ -7,6 +7,7 @@ from conftest import APP_ROOT
 KEYBOARD = "Profile name (A-Z, 0-9, space, - or _)"
 BAD = "Use 1-24 Latin letters, digits, spaces, - or _."
 DUPLICATE = "That name is already in the list."
+SPACES = "The name must not start or end with a space."
 TAIL = ["New name...", "Restore...", "Settings...", "Update script..."]
 
 
@@ -73,11 +74,22 @@ def test_name_check_rules(run_unit):
         '    printf("dup=%d\\n", profile_name_check("SERHII", &n));\n'
         '    printf("dot=%d\\n", profile_name_check("a.b", &n));\n'
         '    printf("ok=%d\\n", profile_name_check("Son 2_x-y", &n));\n'
+        '    printf("lead=%d\\n", profile_name_check(" Son", &n));\n'
+        '    printf("trail=%d\\n", profile_name_check("Son ", &n));\n'
+        '    printf("spaces=%d\\n", profile_name_check("   ", &n));\n'
         '    names_free(&n);'
     )
     assert r.exit == 0, r.output
-    for line in ["empty=0", "24=1", "25=0", "dup=-1", "dot=0", "ok=1"]:
+    for line in ["empty=0", "24=1", "25=0", "dup=-1", "dot=0", "ok=1", "lead=-2", "trail=-2", "spaces=-2"]:
         assert line in r.output
+
+
+def test_edge_spaces_refused(run, profiles):
+    # the name goes into file names in Koofr, where an edge space is invisible
+    r = run([key(" Serhii"), MESSAGE, key("Serhii "), MESSAGE, key("   "), MESSAGE, key("Serhii"), MESSAGE])
+    assert r.exit == 0, r.output
+    assert [u["prompt"] for u in r.ui][:7] == [KEYBOARD, SPACES, KEYBOARD, SPACES, KEYBOARD, SPACES, KEYBOARD]
+    assert profiles.path.read_text() == "Serhii\n"
 
 
 def test_duplicate_ignoring_case_refused(run, profiles):

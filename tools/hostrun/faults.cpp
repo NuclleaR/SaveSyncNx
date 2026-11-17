@@ -4,16 +4,21 @@
  *     their name and tick it per chunk, polling the abort flag in between, so
  *     raising the abort on a tick is hold-B pressed while the binding runs;
  *   - fopen / fclose: the files opened under a matching path report a failed
- *     close (after really closing), as a full or failing SD card would.
+ *     close (after really closing), as a full or failing SD card would;
+ *   - rename: with --fat-rename it refuses an existing destination (EEXIST),
+ *     as FAT does, so the scripts' FAT fallbacks run on the PC.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "faults.hpp"
 #include "scriptconsole.hpp"
+#include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <mutex>
 #include <set>
+#include <sys/stat.h>
 
 extern "C" {
 #include "checkpoint_api.h"
@@ -25,6 +30,12 @@ namespace {
     std::string g_currentIo;
     std::string g_closePart;
     std::set<FILE*> g_failing;
+    std::atomic<bool> g_fatRename{false};
+}
+
+void Faults::fatRename(void)
+{
+    g_fatRename = true;
 }
 
 void Faults::abortDuring(const std::string& label)
@@ -95,5 +106,17 @@ int __wrap_fclose(FILE* f)
     }
     const int rc = __real_fclose(f);
     return fail ? EOF : rc;
+}
+
+int __real_rename(const char* from, const char* to);
+
+int __wrap_rename(const char* from, const char* to)
+{
+    struct stat st;
+    if (g_fatRename && to != nullptr && stat(to, &st) == 0) {
+        errno = EEXIST;
+        return -1;
+    }
+    return __real_rename(from, to);
 }
 }

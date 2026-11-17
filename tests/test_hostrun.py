@@ -9,6 +9,19 @@ def test_runs_script_and_captures_output(run_raw):
     assert "hi" in r.output
 
 
+def test_fat_rename_refuses_existing_destination(run_raw):
+    # proves the FAT branches the --fat-rename tests rely on are really taken
+    body = ('int main(int argc, char** argv)\n{\n'
+            '    FILE* f = fopen("a.txt", "w");\n    fputs("a", f);\n    fclose(f);\n'
+            '    f = fopen("b.txt", "w");\n    fputs("b", f);\n    fclose(f);\n'
+            '    printf("taken=%d\\n", rename("a.txt", "b.txt"));\n'
+            '    printf("free=%d\\n", rename("a.txt", "c.txt"));\n    return 0;\n}\n')
+    r = run_raw(HEADERS + body, faults=["--fat-rename"])
+    assert "taken=-1" in r.output and "free=0" in r.output, r.output
+    r = run_raw(HEADERS + body)
+    assert "taken=0" in r.output, r.output
+
+
 def test_catalog_and_save_read(run_raw, catalog):
     catalog.add("0100ABCD00000000", "Some Game", "account", {"/a.bin": b"xyz"})
     r = run_raw(HEADERS + """

@@ -87,6 +87,15 @@ def test_confirm_replaces_script(update, dav, installed, sd):
     assert r.ui[-1]["prompt"] == "SaveSync v0.1.0"
 
 
+def test_confirm_replaces_script_on_fat(update, dav, installed, sd):
+    # FAT's rename refuses the existing script: it is moved aside, then dropped
+    release(dav)
+    r = update([YES, MESSAGE], faults=["--fat-rename"])
+    assert r.ui[2]["prompt"] == DONE
+    assert installed.read_bytes() == NEW
+    assert no_leftovers(sd)
+
+
 def test_confirm_installs_when_folder_missing(update, dav, sd):
     release(dav)
     r = update([YES, MESSAGE])
@@ -131,7 +140,8 @@ def test_no_release_yet(update, dav, installed):
     assert r.ui[1]["prompt"] == failed("GitHub could not be reached (404)")
 
 
-@pytest.mark.parametrize("answer", [b'{"name": "v0.2.0"}', b'{"tag_name": "../../evil"}', b"not json"])
+@pytest.mark.parametrize("answer", [b'{"name": "v0.2.0"}', b'{"tag_name": "../../evil"}', b"not json",
+                                    b'{"tag_name": ".."}', b'{"tag_name": "."}'])
 def test_release_without_usable_tag(update, dav, installed, answer):
     dav.static[API] = (200, answer)
     r = update([MESSAGE])

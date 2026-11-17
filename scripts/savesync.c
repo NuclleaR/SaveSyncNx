@@ -895,6 +895,16 @@ struct names g_skeys;
 struct names g_svals;
 int g_state_ready = 0;
 
+/* Strip a trailing "\n" / "\r\n" from a line read with fgets. */
+void chomp(char* s)
+{
+    int n = strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
+        s[n - 1] = '\0';
+        n        = n - 1;
+    }
+}
+
 void state_paths(char* path, char* tmp)
 {
     sprintf(path, "%s/savesync-state.txt", g_cfg);
@@ -1484,16 +1494,6 @@ void profiles_path(char* dst)
     sprintf(dst, "%s/savesync-profiles.txt", g_cfg);
 }
 
-/* Strip a trailing "\n" / "\r\n" from a line read with fgets. */
-void chomp(char* s)
-{
-    int n = strlen(s);
-    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
-        s[n - 1] = '\0';
-        n        = n - 1;
-    }
-}
-
 /* Append the saved profile names, in creation order, to `out`. Returns how many. */
 int profiles_load(struct names* out)
 {
@@ -1555,7 +1555,9 @@ int same_ignoring_case(char* a, char* b)
     return a[i] == b[i];
 }
 
-/* 1 valid, 0 bad characters or length, -1 equal to an existing name ignoring case. */
+/* 1 valid, 0 bad characters or length, -1 equal to an existing name ignoring
+ * case, -2 a space at the start or the end (it would be invisible in the
+ * file names in Koofr; a name of spaces only is caught here too). */
 int profile_name_check(char* name, struct names* existing)
 {
     int n = strlen(name);
@@ -1569,6 +1571,9 @@ int profile_name_check(char* name, struct names* existing)
             return 0;
         }
         i = i + 1;
+    }
+    if (name[0] == ' ' || name[n - 1] == ' ') {
+        return -2;
     }
     i = 0;
     while (i < existing->count) {
@@ -1602,6 +1607,9 @@ int ask_new_name(char* out, struct names* names)
         }
         if (ok == -1) {
             gui_message("That name is already in the list.");
+        }
+        else if (ok == -2) {
+            gui_message("The name must not start or end with a space.");
         }
         else {
             gui_message("Use 1-24 Latin letters, digits, spaces, - or _.");
@@ -1878,9 +1886,11 @@ void backup_entry(int idx, int kind, char* profile)
         g_unchanged = g_unchanged + 1;
     }
     else if (upload_version(zip, kind == KIND_ACCOUNT ? "saves" : "device", folder, base, incoming, fin)) {
-        state_set(key, fp);
         snprintf(line, NAMEN + 64, "  uploaded %s", fin);
         script_log(line);
+        if (!state_set(key, fp)) {
+            script_log("  the fingerprint could not be saved; the next run uploads this save again");
+        }
         g_uploaded = g_uploaded + 1;
     }
     else {
@@ -2350,12 +2360,13 @@ int restore_flow(void)
 
 #define TAGN 32
 
-/* 1 when `tag` is a plausible release tag: 1-31 of A-Z a-z 0-9 . - _ (it goes
- * into a URL path and into the dialogs). */
+/* 1 when `tag` is a plausible release tag: 1-31 of A-Z a-z 0-9 . - _, and
+ * not "." or ".." (it goes into a URL path as one segment, and into the
+ * dialogs). */
 int tag_ok(char* tag)
 {
     int n = strlen(tag);
-    if (n < 1 || n >= TAGN) {
+    if (n < 1 || n >= TAGN || strcmp(tag, ".") == 0 || strcmp(tag, "..") == 0) {
         return 0;
     }
     int i = 0;

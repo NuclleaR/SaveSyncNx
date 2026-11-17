@@ -117,3 +117,13 @@ def test_test_copy_404_and_transfer_error(run_unit, dav, seed_vault):
     assert "t=0 fatal=0" in r.output, r.output
     assert r.ui[0]["prompt"].startswith("No connection to Koofr (transfer error -")
     assert r.ui[0]["prompt"].endswith(").\nCheck Wi-Fi.")
+
+
+def test_unflushed_vault_refused(run_unit, sd):
+    # the SD card fails the final flush: a vault that may be short is not kept
+    r = run_unit('init_paths();\n    strcpy(g_user, "me@example.com");\n    strcpy(g_pw, "app-pass");\n'
+                 '    printf("vault=%d\\n", vault_write());',
+                 answers=[{"kind": "Message"}], faults=["--fail-close", "savesync.vault"])
+    assert "vault=0" in r.output, r.output
+    assert r.ui[-1]["prompt"] == "config/savesync.vault was written short.\nThe SD card may be full."
+    assert not (sd / APP_ROOT / "config" / "savesync.vault").exists()

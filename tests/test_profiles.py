@@ -107,19 +107,22 @@ def test_new_name_cancel_returns_to_dialog(run, profiles):
 
 def test_restore_and_settings_entries(run, profiles):
     profiles("Serhii")
-    r = run([pick("Settings..."), pick("Test connection"), MESSAGE, pick("Restore...")])
+    r = run([pick("Settings..."), pick("Test connection"), MESSAGE, pick("Restore..."), MESSAGE])
     assert r.exit == 0, r.output
-    assert [u["prompt"] for u in r.ui] == ["SaveSync v0.1.0", "Settings", "Connected to Koofr as me@example.com.", "SaveSync v0.1.0"]
-    assert "restore" in r.output
+    assert [u["prompt"] for u in r.ui] == [
+        "SaveSync v0.1.0", "Settings", "Connected to Koofr as me@example.com.", "SaveSync v0.1.0",
+        "There are no backups in Koofr for the games on this console.",
+    ]
     assert "backup as" not in r.output
 
 
 def test_update_entry_returns_to_dialog(run, profiles):
     profiles("Serhii")
-    r = run([pick("Update script..."), {"kind": "PickOne", "index": -1}])
+    r = run([pick("Update script..."), MESSAGE, {"kind": "PickOne", "index": -1}])
     assert r.exit == 0, r.output
-    assert "update" in r.output
-    assert [u["prompt"] for u in r.ui] == ["SaveSync v0.1.0", "SaveSync v0.1.0"]
+    assert [u["prompt"] for u in r.ui][0] == "SaveSync v0.1.0"
+    assert r.ui[1]["prompt"].startswith("Could not update: GitHub could not be reached (")
+    assert r.ui[2]["prompt"] == "SaveSync v0.1.0"
 
 
 def test_cancel_first_dialog_quits(run, profiles):
@@ -134,3 +137,10 @@ def test_first_keyboard_cancel_quits(run, profiles):
     assert r.exit == 0, r.output
     assert "backup as" not in r.output
     assert not profiles.path.exists()
+
+
+def test_unflushed_profiles_reported(run_unit):
+    r = run_unit('init_paths();\n    struct names n;\n    names_init(&n);\n    names_add(&n, "Serhii");\n'
+                 '    printf("saved=%d\\n", profiles_save(&n));',
+                 faults=["--fail-close", "savesync-profiles.txt"])
+    assert "saved=0" in r.output, r.output

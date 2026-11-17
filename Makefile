@@ -40,10 +40,14 @@ HOST_INC      := -Itools/hostrun/shim -I$(CHECKPOINT)/common -I$(CHECKPOINT)/com
 HOST_FLAGS    := -O2 -g -MMD -MP -funwind-tables -DUNIX_HOST -DDEBUGGER -D_GNU_SOURCE=1 $(HOST_INC)
 HOST_CXXFLAGS := $(HOST_FLAGS) -std=gnu++23 -fno-rtti
 
-# Taps for the full transcript and the status list; see tools/hostrun/capture.cpp.
+# Taps for the full transcript and the status list (tools/hostrun/capture.cpp),
+# and for the faults a test can switch on (tools/hostrun/faults.cpp).
 HOST_WRAP := -Wl,--wrap=ckpt_console_write \
              -Wl,--wrap=_ZN13ScriptConsole3logERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE \
-             -Wl,--wrap=_ZN14ScriptUiBridge9setStatusENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+             -Wl,--wrap=_ZN14ScriptUiBridge9setStatusENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE \
+             -Wl,--wrap=_ZN13ScriptConsole7beginIoENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEx \
+             -Wl,--wrap=_ZN13ScriptConsole5addIoEx \
+             -Wl,--wrap=fopen -Wl,--wrap=fclose
 HOST_LIBS := -lcurl -L$(MBEDTLS_LIB) -Wl,-rpath,$(MBEDTLS_LIB) -lmbedcrypto -lpthread -lm
 
 hostrun: $(HOSTRUN)

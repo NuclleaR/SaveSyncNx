@@ -32,8 +32,12 @@ class FakeDav:
         self.no_date = False
         self.quota_full = False
         self.static = {}
+        self.extra_hrefs = {}  # folder rel path -> raw hrefs added to its Depth 1 listing
         self.log = []
+        self.request_headers = []  # (method, decoded path, {header: value}) per request
         self._faults = []
+        self._from = None
+        self._short_puts = []
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(self))
         self._server.daemon_threads = True
@@ -49,6 +53,18 @@ class FakeDav:
         with self._lock:
             self._faults.append((method, path_contains, status))
 
+    def fail_from(self, method, status, path_contains=None):
+        """From the next matching request on, answer every request with `status`
+        (None: close the socket unanswered): the network or the login is gone."""
+        with self._lock:
+            self._faults.append((method, path_contains, ("from", status)))
+
+    def short_next_put(self, keep, path_contains=None):
+        """Answer the next matching PUT 201 but store only its first `keep` bytes
+        (what Koofr does with *.bin files, as 3DSaveSync found)."""
+        with self._lock:
+            self._short_puts.append((path_contains, keep))
+
     def drop_next(self, method, path_contains=None):
         """Read the next matching request, then close the socket unanswered."""
         with self._lock:
@@ -60,9 +76,14 @@ class FakeDav:
 
     def _take_fault(self, method, path):
         with self._lock:
+            if self._from is not None:
+                return True, self._from[1]
             for i, (m, contains, status) in enumerate(self._faults):
                 if m == method and (contains is None or contains in path):
                     del self._faults[i]
+                    if isinstance(status, tuple):
+                        self._from = status  # ("from", status): None is a valid status
+                        return True, status[1]
                     return True, status
         return False, None
 
@@ -139,6 +160,8 @@ def _handler_for(dav):
 
         def _dispatch(self):
             self._path = unquote(urlsplit(self.path).path)
+            with dav._lock:
+                dav.request_headers.append((self.command, self._path, dict(self.headers.items())))
             body = self._read_body()
             matched, status = dav._take_fault(self.command, self._path)
             if matched:
@@ -181,6 +204,12 @@ def _handler_for(dav):
             elif not target.parent.is_dir() or target.is_dir():
                 self._answer(409)
             else:
+                with dav._lock:
+                    for i, (contains, keep) in enumerate(dav._short_puts):
+                        if contains is None or contains in self._path:
+                            del dav._short_puts[i]
+                            body = body[:keep]
+                            break
                 target.write_bytes(body)
                 self._answer(201)
 
@@ -198,6 +227,10 @@ def _handler_for(dav):
             if self.headers.get("Depth", "1") != "0" and target.is_dir():
                 for child in sorted(target.iterdir(), key=lambda p: p.name):
                     entries.append(_propfind_entry((rel + "/" if rel else "") + child.name, child))
+                for href in dav.extra_hrefs.get(rel, []):
+                    entries.append(f"<D:response><D:href>{href}</D:href><D:propstat><D:prop><D:resourcetype></D:resourcetype>"
+                                   "<D:getcontentlength>1</D:getcontentlength></D:prop>"
+                                   "<D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>")
             xml = '<?xml version="1.0" encoding="UTF-8"?><D:multistatus xmlns:D="DAV:">' + "".join(entries) + "</D:multistatus>"
             self._answer(207, xml.encode(), {"Content-Type": "text/xml; charset=utf-8"})
 

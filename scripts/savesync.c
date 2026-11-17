@@ -88,6 +88,7 @@ char g_pw[PWN];
 char g_auth[AUTHN]; /* "Authorization: Basic ...", built by build_auth() */
 
 int g_fatal = 0;  /* 0, FATAL_NET, FATAL_LOGIN or FATAL_FULL: why the run must stop */
+int g_status = 0; /* the last response's status (negative: transfer error) */
 char g_date[64];  /* the last response's Date header, "" when it had none */
 char g_hbuf[HDRN];
 
@@ -454,6 +455,7 @@ void build_headers(char* extra)
  * and, for the statuses that end a run, the reason in g_fatal. */
 void note_response(int st, char* respHeaders)
 {
+    g_status  = st;
     g_date[0] = '\0';
     if (respHeaders != NULL) {
         char* v = http_header_value(respHeaders, "Date");
@@ -511,7 +513,8 @@ int dav_mkcol(char* url)
 }
 
 /* Children of the folder at `url`, appended to `out` as decoded leaf names
- * (no trailing '/'), however many there are. 1 when the listing worked.
+ * (no trailing '/', never "." or ".."), however many there are. 1 when the
+ * listing worked.
  * The folder itself is in a Depth 1 answer too; it is recognised by its path,
  * not by its position. Scans with strstr: an interpreted per-byte loop over a
  * listing of hundreds of versions would be slow. */
@@ -559,7 +562,9 @@ int dav_list(char* url, struct names* out)
         rstrip_slash(raw);
         if (strcmp(raw, self) != 0) {
             basename_of(raw, leaf, NAMEN);
-            if (leaf[0] != '\0') {
+            /* "." and ".." are never a child: a URL built from one names the
+             * folder itself or its parent, which the cleanup would delete */
+            if (leaf[0] != '\0' && strcmp(leaf, ".") != 0 && strcmp(leaf, "..") != 0) {
                 names_add(out, leaf);
             }
         }
@@ -633,7 +638,9 @@ int dav_get_file(char* url, char* path)
     if (n > 0) {
         wrote = fwrite(body, 1, n, f);
     }
-    fclose(f);
+    if (fclose(f) != 0) {
+        wrote = -1; /* the final flush failed: the file may be short */
+    }
     free(body);
     if (wrote != n) {
         remove(path);
@@ -641,6 +648,51 @@ int dav_get_file(char* url, char* path)
         return 0;
     }
     return 1;
+}
+
+/* The size of the file at `url` as Koofr reports it (PROPFIND Depth 0,
+ * getcontentlength), or -1 when it cannot be had. */
+int dav_size(char* url)
+{
+    char* body = NULL;
+    int n      = 0;
+    int st     = dav_call("PROPFIND", url, "Depth: 0\nContent-Type: application/xml; charset=utf-8", PROPFIND_BODY, &body, &n);
+    if (st != 207 || body == NULL) {
+        if (body != NULL) {
+            free(body);
+        }
+        char line[64];
+        sprintf(line, "PROPFIND failed (%d)", st);
+        script_log(line);
+        return -1;
+    }
+    char* tag = "getcontentlength>";
+    int skip  = strlen(tag);
+    char* p   = strstr(body, tag);
+    int size  = -1;
+    if (p != NULL && p[skip] >= '0' && p[skip] <= '9') {
+        size  = 0;
+        int k = 0;
+        while (p[skip + k] >= '0' && p[skip + k] <= '9') {
+            size = size * 10 + (p[skip + k] - '0');
+            k    = k + 1;
+        }
+    }
+    free(body);
+    return size;
+}
+
+/* The size of the SD file `path`, or -1 when it cannot be opened. */
+int sd_size(char* path)
+{
+    FILE* f = fopen(path, "rb");
+    if (f == NULL) {
+        return -1;
+    }
+    fseek(f, 0, SEEK_END);
+    int n = ftell(f);
+    fclose(f);
+    return n;
 }
 
 /* ---- change detection --------------------------------------------------- */
@@ -1050,10 +1102,8 @@ int stamp_from_date(char* date, char* out)
     return 1;
 }
 
-/* Make sure SaveSyncNx/, saves/, device/ and .incoming/ exist, and take this
- * run's version time from Koofr's Date (the console clock only if there is
- * none). 1 when the folders are there. */
-int cloud_prepare(void)
+/* The URLs of SaveSyncNx/ and its saves/, device/ and .incoming/. */
+void cloud_urls(void)
 {
     strcpy(g_url_root, g_base);
     url_add(g_url_root, "SaveSyncNx", URLN);
@@ -1063,6 +1113,14 @@ int cloud_prepare(void)
     url_add(g_url_device, "device", URLN);
     strcpy(g_url_incoming, g_url_root);
     url_add(g_url_incoming, ".incoming", URLN);
+}
+
+/* Make sure SaveSyncNx/, saves/, device/ and .incoming/ exist, and take this
+ * run's version time from Koofr's Date (the console clock only if there is
+ * none). 1 when the folders are there. */
+int cloud_prepare(void)
+{
+    cloud_urls();
     if (!dav_mkcol(g_url_root) || !dav_mkcol(g_url_saves) || !dav_mkcol(g_url_device) || !dav_mkcol(g_url_incoming)) {
         return 0;
     }
@@ -1103,7 +1161,8 @@ void cloud_cleanup_incoming(void)
 }
 
 /* Upload the zip as a new version that never replaces another: PUT to
- * .incoming/<incomingName>, MKCOL the game folder, then MOVE (Overwrite: F)
+ * .incoming/<incomingName>, check that Koofr holds all of it, MKCOL the game
+ * folder, then MOVE (Overwrite: F)
  * to "<versionBase>.zip", "<versionBase> (2).zip", ... until a name is free.
  * The MOVE is the completion point. outFinal gets the file name. 1 OK. */
 int upload_version(char* zipPath, char* kindDir, char* gameFolder, char* versionBase, char* incomingName, char* outFinal)
@@ -1124,6 +1183,17 @@ int upload_version(char* zipPath, char* kindDir, char* gameFolder, char* version
     if (st != 200 && st != 201 && st != 204) {
         sprintf(line, "upload: PUT failed (%d)", st);
         script_log(line);
+        return 0;
+    }
+    /* Koofr can answer a PUT 201 and keep fewer bytes (3DSaveSync saw it
+     * serve *.bin files back empty): only a file of the full size is moved
+     * into place; any other is deleted and the save counts as failed. */
+    int sent   = sd_size(zipPath);
+    int stored = dav_size(inUrl);
+    if (stored != sent || sent < 0) {
+        sprintf(line, "upload: Koofr holds %d of %d bytes", stored, sent);
+        script_log(line);
+        dav_delete(inUrl);
         return 0;
     }
     if (!dav_mkcol(game)) {
@@ -1256,7 +1326,9 @@ int vault_write(void)
         return 0;
     }
     int wrote = fwrite(blob, 1, bn, f);
-    fclose(f);
+    if (fclose(f) != 0) {
+        wrote = -1; /* the final flush failed: the vault may be short */
+    }
     free(blob);
     if (wrote != bn) {
         remove(path);
@@ -1444,7 +1516,8 @@ int profiles_load(struct names* out)
     return count;
 }
 
-/* Rewrite the profiles file from `in`. 1 on success. */
+/* Rewrite the profiles file from `in`. 1 on success, 0 when the file could
+ * not be opened or its final flush failed. */
 int profiles_save(struct names* in)
 {
     char path[PATHN];
@@ -1459,8 +1532,7 @@ int profiles_save(struct names* in)
         fputs("\n", f);
         i = i + 1;
     }
-    fclose(f);
-    return 1;
+    return fclose(f) == 0;
 }
 
 int lower_ascii(int c)
@@ -1522,7 +1594,9 @@ int ask_new_name(char* out, struct names* names)
         int ok = profile_name_check(buf, names);
         if (ok == 1) {
             names_add(names, buf);
-            profiles_save(names);
+            if (!profiles_save(names)) {
+                script_log("the profile names could not be saved");
+            }
             strcpy(out, buf);
             return 1;
         }
@@ -1634,11 +1708,14 @@ int entry_kind(int idx)
     return KIND_SKIP;
 }
 
-/* The game's cloud folder: the name of Checkpoint's backup folder for it
- * ("0x<TITLEID> <name>"), made safe as one path segment. */
+/* The game's cloud folder, made safe as one path segment: the name of
+ * Checkpoint's backup folder for it ("0x<TITLEID> <name>"). For a title with
+ * any non-ASCII byte Checkpoint uses "0x<TITLEID> 0x<TITLEID>", which nobody
+ * can recognise in Koofr, so the cloud folder takes the real title name. */
 void game_folder(int idx, char* out, int size)
 {
-    char* p = title_backup_path(idx, 0);
+    char* p    = title_backup_path(idx, 0);
+    char* name = title_name(idx);
     char path[PATHN];
     char base[NAMEN];
     strncpy(path, p, PATHN - 1);
@@ -1646,6 +1723,20 @@ void game_folder(int idx, char* out, int size)
     free(p);
     rstrip_slash(path);
     basename_of(path, base, NAMEN);
+    int ascii = 1;
+    int i     = 0;
+    while (name[i] != '\0') {
+        if ((name[i] & 0xFF) >= 0x80) {
+            ascii = 0;
+        }
+        i = i + 1;
+    }
+    if (!ascii) {
+        char* tid = title_id(idx);
+        snprintf(base, NAMEN, "0x%s %s", tid, name);
+        free(tid);
+    }
+    free(name);
     sanitize_name(base, out, size);
 }
 
@@ -1689,7 +1780,9 @@ int dump_dir(int h, char* dir, char* dstDir)
                     if (size > 0 && fwrite(data, 1, size, f) != size) {
                         ok = 0;
                     }
-                    fclose(f);
+                    if (fclose(f) != 0) {
+                        ok = 0;
+                    }
                     g_dump_files = g_dump_files + 1;
                 }
                 free(data);
@@ -1798,8 +1891,51 @@ void backup_entry(int idx, int kind, char* profile)
     free(tid);
 }
 
+/* The message a run ends with when Koofr cannot go on: g_fatal's reason, or
+ * the last HTTP status when the folders could not be made for another one. */
+void show_stop(void)
+{
+    char line[96];
+    if (g_fatal == FATAL_LOGIN) {
+        strcpy(line, "Koofr rejected the login. Check email and app password in Settings.");
+    }
+    else if (g_fatal == FATAL_FULL) {
+        strcpy(line, "Koofr storage is full.");
+    }
+    else if (g_fatal == FATAL_NET) {
+        strcpy(line, "No connection to Koofr. Check Wi-Fi.");
+    }
+    else {
+        sprintf(line, "Koofr answered HTTP %d.", g_status);
+    }
+    script_log(line);
+    gui_message(line);
+}
+
+/* After a transfer error or a 401/403 in the middle of a run, one PROPFIND
+ * Depth 0 of SaveSyncNx/: when Koofr answers it, the failure was that save's
+ * alone (curl gives up on a transfer slower than 300 B/s for 10 s, and Koofr
+ * may refuse one file), so g_fatal is cleared and the run goes on. Otherwise
+ * g_fatal keeps a reason and the run stops. A full storage is never rechecked. */
+void recheck_koofr(void)
+{
+    int was = g_fatal;
+    g_fatal = 0;
+    int st  = dav_call("PROPFIND", g_url_root, "Depth: 0\nContent-Type: application/xml; charset=utf-8", PROPFIND_BODY, NULL, NULL);
+    if (st == 207) {
+        script_log("  Koofr still answers: only this save failed");
+        return;
+    }
+    if (g_fatal == 0) {
+        g_fatal = was;
+    }
+}
+
 /* The backup of a run: every account and device save that changed since its
- * last upload becomes a new version in Koofr. */
+ * last upload becomes a new version in Koofr. No network, a rejected login or
+ * a full storage stop the run at once, without the summary (a transfer error
+ * or a 401/403 on one save only after recheck_koofr); anything else fails only
+ * the save it happened to. */
 int backup_run(char* profile)
 {
     char line[128];
@@ -1812,43 +1948,555 @@ int backup_run(char* profile)
     script_log(line);
     gui_status("Connecting to Koofr...");
     if (!cloud_prepare()) {
+        show_stop();
         return 0;
     }
     cloud_cleanup_incoming();
+    if (g_fatal != 0) {
+        show_stop();
+        return 0;
+    }
     state_load();
     show_status();
 
     int count = titles_count();
     progress_begin(0, "Saves", count);
     int idx = 0;
-    while (idx < count) {
+    while (idx < count && g_fatal == 0) {
         int kind = entry_kind(idx);
         if (kind != KIND_SKIP) {
             backup_entry(idx, kind, profile);
+            if (g_fatal == FATAL_NET || g_fatal == FATAL_LOGIN) {
+                recheck_koofr();
+            }
         }
         idx = idx + 1;
         progress_set(0, idx);
     }
     progress_end(0);
     progress_clear();
+    if (g_fatal != 0) {
+        show_stop();
+        return 0;
+    }
     sprintf(line, "Backup done: %d uploaded, %d unchanged, %d failed.", g_uploaded, g_unchanged, g_failed);
     script_log(line);
     gui_message(line);
     return 1;
 }
 
-/* ---- stubs replaced by later tasks -------------------------------------- */
+/* ---- restore ------------------------------------------------------------ */
 
-int restore_flow(void)
+/* 1 when the folder name starts with a title id ("0x" + 16 hex digits, then a
+ * space or the end); `out` gets the digits in uppercase. */
+int folder_title_id(char* folder, char* out)
 {
-    printf("restore\n");
+    if (folder[0] != '0' || (folder[1] != 'x' && folder[1] != 'X')) {
+        return 0;
+    }
+    int i = 0;
+    while (i < 16) {
+        int c = folder[2 + i];
+        if (hexval(c) < 0) {
+            return 0;
+        }
+        if (c >= 'a' && c <= 'f') {
+            c = c - 'a' + 'A';
+        }
+        out[i] = c;
+        i      = i + 1;
+    }
+    out[16] = '\0';
+    return folder[18] == ' ' || folder[18] == '\0';
+}
+
+/* 1 when one of the cloud folders `folders` belongs to title `tid`. */
+int folders_have_title(struct names* folders, char* tid)
+{
+    char id[20];
+    int i = 0;
+    while (i < folders->count) {
+        if (folder_title_id(folders->items[i], id) && strcmp(id, tid) == 0) {
+            return 1;
+        }
+        i = i + 1;
+    }
     return 0;
 }
 
+int names_has(struct names* n, char* s)
+{
+    int i = 0;
+    while (i < n->count) {
+        if (strcmp(n->items[i], s) == 0) {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+/* The game folders under `url`. A folder Koofr does not have yet (404: no
+ * backup of that kind so far) is an empty list. 1 OK. */
+int restore_list(char* url, struct names* out)
+{
+    if (dav_list(url, out)) {
+        return 1;
+    }
+    return g_fatal == 0 && g_status == 404;
+}
+
+/* How many games of one kind Koofr has that the console has no save of:
+ * the distinct title ids of `folders` missing from `onConsole`. */
+int count_missing(struct names* folders, struct names* onConsole)
+{
+    char id[20];
+    char prev[20];
+    int k   = 0;
+    prev[0] = '\0';
+    sort_names(folders);
+    int i = 0;
+    while (i < folders->count) {
+        if (folder_title_id(folders->items[i], id) && strcmp(id, prev) != 0) {
+            strcpy(prev, id);
+            if (!names_has(onConsole, id)) {
+                k = k + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return k;
+}
+
+/* Download one version and unzip it into a new folder in Checkpoint's backup
+ * folder for catalog entry `idx`: "<version>", or "<version> (2)", ... when
+ * that is taken, so no existing folder is ever written into. The zip is
+ * unpacked into savesync/restore first and renamed into place only once it is
+ * whole: hold-B stops the script at the next statement, so a cleanup after
+ * unzip would never run, and Checkpoint must never list a half-written folder.
+ * What a failure or hold-B leaves in savesync/ goes at the next run's start. */
+void restore_version(int idx, char* kindUrl, char* folder, char* version)
+{
+    char url[URLBUFN];
+    char down[PATHN];
+    char stage[PATHN];
+    char base[PATHN];
+    char dest[PATHN];
+    char zipName[NAMEN];
+    char line[PATHN + 64];
+    sprintf(down, "%s/down.zip", g_work);
+    sprintf(stage, "%s/restore", g_work);
+    snprintf(zipName, NAMEN, "%s.zip", version);
+    strcpy(url, kindUrl);
+    int ok = url_add(url, folder, URLBUFN) && url_add(url, zipName, URLBUFN);
+
+    char* p = title_backup_path(idx, 0);
+    strncpy(base, p, PATHN - 1);
+    base[PATHN - 1] = '\0';
+    free(p);
+    rstrip_slash(base);
+    dest[0] = '\0';
+    int copy = 1;
+    while (ok && dest[0] == '\0' && copy <= MAX_COPIES) {
+        if (copy == 1) {
+            snprintf(line, PATHN + 64, "%s/%s", base, version);
+        }
+        else {
+            snprintf(line, PATHN + 64, "%s/%s (%d)", base, version, copy);
+        }
+        if (strlen(line) >= PATHN) {
+            ok = 0;
+        }
+        else if (!sd_exists(line)) {
+            strcpy(dest, line);
+        }
+        copy = copy + 1;
+    }
+    if (dest[0] == '\0') {
+        ok = 0;
+    }
+
+    int made = 0;
+    if (ok) {
+        gui_status("Downloading from Koofr...");
+        ok = dav_get_file(url, down);
+        show_status();
+    }
+    if (ok) {
+        made = 1;
+        ok   = sd_mkdirs(stage) == 0 && unzip(down, stage) == 0 && rename(stage, dest) == 0;
+    }
+    remove(down);
+    if (ok) {
+        snprintf(line, PATHN + 64, "restored %s into %s", zipName, dest);
+        script_log(line);
+        gui_message("Downloaded. Pick it in Checkpoint's backup\nlist for this game and press Restore.\nFor an account save, select the right\nprofile first.");
+        return;
+    }
+    if (made) {
+        rm_tree(stage);
+        rmdir(stage);
+    }
+    snprintf(line, PATHN + 64, "restore of %s failed", zipName);
+    script_log(line);
+    gui_message("The download failed and was removed.\nNothing was changed.");
+}
+
+/* The versions of one game, from every cloud folder of its title id (a game
+ * renamed in Checkpoint has two), newest first. 1 when the restore is over,
+ * 0 to go back to the game list. */
+int restore_game(int idx, char* tid, char* label, char* kindUrl, struct names* folders)
+{
+    struct names all;
+    struct names shown;
+    struct names from;
+    char id[20];
+    char url[URLBUFN];
+    char entry[NAMEN * 2 + 2];
+    char text[NAMEN * 2 + 256];
+    names_init(&all);
+    names_init(&shown);
+    names_init(&from);
+
+    int i = 0;
+    while (i < folders->count) {
+        char* folder = folders->items[i];
+        if (folder_title_id(folder, id) && strcmp(id, tid) == 0) {
+            struct names files;
+            names_init(&files);
+            strcpy(url, kindUrl);
+            if (!url_add(url, folder, URLBUFN) || !dav_list(url, &files)) {
+                names_free(&files);
+                names_free(&all);
+                show_stop();
+                return 1;
+            }
+            int j = 0;
+            while (j < files.count) {
+                char* f = files.items[j];
+                int n   = strlen(f);
+                int zip = n > 4 && f[n - 4] == '.' && f[n - 3] == 'z' && f[n - 2] == 'i' && f[n - 1] == 'p';
+                if (zip && n - 4 < NAMEN && strlen(folder) < NAMEN) {
+                    strncpy(entry, f, n - 4);
+                    entry[n - 4] = '\0';
+                    strcat(entry, "\t");
+                    strcat(entry, folder);
+                    names_add(&all, entry);
+                }
+                j = j + 1;
+            }
+            names_free(&files);
+        }
+        i = i + 1;
+    }
+    if (all.count == 0) {
+        names_free(&all);
+        snprintf(text, NAMEN * 2 + 256, "There are no versions of %s in Koofr.", label);
+        gui_message(text);
+        return 0;
+    }
+
+    sort_names(&all);
+    i = all.count - 1;
+    while (i >= 0) {
+        char* e = all.items[i];
+        int t   = 0;
+        while (e[t] != '\t') {
+            t = t + 1;
+        }
+        strncpy(entry, e, t);
+        entry[t] = '\0';
+        names_add(&shown, entry);
+        int k = 0;
+        while (e[t + 1 + k] != '\0') {
+            entry[k] = e[t + 1 + k];
+            k        = k + 1;
+        }
+        entry[k] = '\0';
+        names_add(&from, entry);
+        i = i - 1;
+    }
+    names_free(&all);
+
+    char prompt[NAMEN + 32];
+    snprintf(prompt, NAMEN + 32, "Pick a version of %s", label);
+    int result = -1;
+    while (result < 0) {
+        int v = gui_pick_one(prompt, shown.items, shown.count);
+        if (v < 0) {
+            result = 0;
+        }
+        else {
+            snprintf(text, NAMEN * 2 + 256,
+                     "Download\n%s\ninto Checkpoint's backup folder for\n%s?\n\nNothing is written to the game until\nyou restore it in Checkpoint.",
+                     shown.items[v], label);
+            if (gui_confirm(text)) {
+                restore_version(idx, kindUrl, from.items[v], shown.items[v]);
+                result = 1;
+            }
+        }
+    }
+    names_free(&shown);
+    names_free(&from);
+    return result;
+}
+
+/* Restore: pick a game the console has a save of, then one of its versions in
+ * Koofr; it lands in Checkpoint's backup folder, never in the save. B goes
+ * back one step (confirm → versions → games → end). */
+int restore_flow(void)
+{
+    struct names sf;
+    struct names df;
+    struct names onA;
+    struct names onD;
+    struct names labels;
+    struct names keys;
+    struct names tids;
+    names_init(&sf);
+    names_init(&df);
+    names_init(&onA);
+    names_init(&onD);
+    names_init(&labels);
+    names_init(&keys);
+    names_init(&tids);
+    g_fatal = 0;
+    rm_tree(g_work);
+    gui_status("Connecting to Koofr...");
+    cloud_urls();
+    int ok = restore_list(g_url_saves, &sf) && restore_list(g_url_device, &df);
+    show_status();
+    if (!ok) {
+        names_free(&sf);
+        names_free(&df);
+        show_stop();
+        return 0;
+    }
+
+    /* the games on the console that have backups of the same kind */
+    int count  = titles_count();
+    int* gidx  = (int*)malloc((count + 1) * sizeof(int));
+    int* gkind = (int*)malloc((count + 1) * sizeof(int));
+    char key[24];
+    char label[NAMEN + 16];
+    int games = 0;
+    int idx   = 0;
+    while (idx < count) {
+        int kind = entry_kind(idx);
+        if (kind != KIND_SKIP) {
+            char* tid = title_id(idx);
+            sprintf(key, "%c%s", kind == KIND_ACCOUNT ? 'a' : 'd', tid);
+            names_add(kind == KIND_ACCOUNT ? &onA : &onD, tid);
+            if (folders_have_title(kind == KIND_ACCOUNT ? &sf : &df, tid) && !names_has(&keys, key)) {
+                char* name = title_name(idx);
+                if (kind == KIND_ACCOUNT) {
+                    snprintf(label, NAMEN + 16, "%s", name);
+                }
+                else {
+                    snprintf(label, NAMEN + 16, "%s (device)", name);
+                }
+                free(name);
+                names_add(&labels, label);
+                names_add(&keys, key);
+                names_add(&tids, tid);
+                gidx[games]  = idx;
+                gkind[games] = kind;
+                games        = games + 1;
+            }
+            free(tid);
+        }
+        idx = idx + 1;
+    }
+    int missing = count_missing(&sf, &onA) + count_missing(&df, &onD);
+
+    if (games == 0) {
+        gui_message("There are no backups in Koofr for the games on this console.");
+    }
+    else {
+        char prompt[160];
+        if (missing > 0) {
+            sprintf(prompt, "Pick a game\n(%d more in Koofr have no save on this console;\nstart a game once to create its save)", missing);
+        }
+        else {
+            strcpy(prompt, "Pick a game");
+        }
+        int done = 0;
+        while (!done) {
+            int g = gui_pick_one(prompt, labels.items, labels.count);
+            if (g < 0) {
+                done = 1;
+            }
+            else if (gkind[g] == KIND_ACCOUNT) {
+                done = restore_game(gidx[g], tids.items[g], labels.items[g], g_url_saves, &sf);
+            }
+            else {
+                done = restore_game(gidx[g], tids.items[g], labels.items[g], g_url_device, &df);
+            }
+        }
+    }
+    free(gidx);
+    free(gkind);
+    names_free(&sf);
+    names_free(&df);
+    names_free(&onA);
+    names_free(&onD);
+    names_free(&labels);
+    names_free(&keys);
+    names_free(&tids);
+    return 1;
+}
+
+/* ---- update ------------------------------------------------------------- */
+
+#define TAGN 32
+
+/* 1 when `tag` is a plausible release tag: 1-31 of A-Z a-z 0-9 . - _ (it goes
+ * into a URL path and into the dialogs). */
+int tag_ok(char* tag)
+{
+    int n = strlen(tag);
+    if (n < 1 || n >= TAGN) {
+        return 0;
+    }
+    int i = 0;
+    while (i < n) {
+        int c = tag[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_')) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+void update_failed(char* reason)
+{
+    char line[192];
+    snprintf(line, 192, "Could not update: %s.\nNothing was changed.", reason);
+    script_log(line);
+    gui_message(line);
+}
+
+/* GET from GitHub: no login, but GitHub wants a User-Agent. Returns the
+ * status; on 200 *out is the NUL-terminated body for the caller to free,
+ * otherwise NULL. */
+int github_get(char* url, char** out, int* outSize)
+{
+    *out     = NULL;
+    *outSize = 0;
+    int st   = web_request("GET", url, "User-Agent: savesync", "", 0, out, outSize, NULL);
+    if (st != 200 && *out != NULL) {
+        free(*out);
+        *out = NULL;
+    }
+    return st;
+}
+
+/* Put the checked download `from` in place of the installed script `to`.
+ * FAT's rename does not replace a file, so the old script is moved aside
+ * first and put back if the new one cannot take its place. 1 OK. */
+int install_script(char* from, char* to)
+{
+    char aside[PATHN];
+    if (rename(from, to) == 0) {
+        return 1;
+    }
+    sprintf(aside, "%s/installed.old", g_work);
+    remove(aside);
+    if (rename(to, aside) != 0) {
+        return 0;
+    }
+    if (rename(from, to) == 0) {
+        remove(aside);
+        return 1;
+    }
+    rename(aside, to);
+    return 0;
+}
+
+/* "Update script...": compare the latest GitHub release with this version,
+ * and on confirm replace <root>/scripts/universal/savesync.c with that
+ * release's script, but only once it is checked to be SaveSync of that tag.
+ * Any failure leaves the installed script as it was. */
 int update_flow(void)
 {
-    printf("update\n");
-    return 0;
+    char tag[TAGN];
+    char url[URLBUFN];
+    char reason[128];
+    char text[256];
+    char want[64];
+    char dir[PATHN];
+    char target[PATHN];
+    char tmp[PATHN];
+    char* body = NULL;
+    int n      = 0;
+
+    gui_status("Checking GitHub for a new version...");
+    int st = github_get(GITHUB_API, &body, &n);
+    show_status();
+    if (body == NULL) {
+        sprintf(reason, "GitHub could not be reached (%d)", st);
+        update_failed(reason);
+        return 0;
+    }
+    struct JSON* j = json_new();
+    json_parse(j, body);
+    free(body);
+    tag[0] = '\0';
+    if (json_is_valid(j)) {
+        jget(j, "tag_name", tag, TAGN);
+    }
+    json_delete(j);
+    if (!tag_ok(tag)) {
+        update_failed("GitHub's answer names no release");
+        return 0;
+    }
+    if (strcmp(tag, SAVESYNC_VERSION) == 0) {
+        sprintf(text, "SaveSync %s is the latest version.", SAVESYNC_VERSION);
+        gui_message(text);
+        return 1;
+    }
+    sprintf(text, "Update SaveSync from %s to %s?\n\nThe new version runs from the next start.", SAVESYNC_VERSION, tag);
+    if (!gui_confirm(text)) {
+        return 0;
+    }
+
+    snprintf(url, URLBUFN, "%s/%s/scripts/savesync.c", GITHUB_RAW, tag);
+    st = github_get(url, &body, &n);
+    if (body == NULL) {
+        sprintf(reason, "GitHub could not be reached (%d)", st);
+        update_failed(reason);
+        return 0;
+    }
+    sprintf(want, "#define SAVESYNC_VERSION \"%s\"", tag);
+    if (strstr(body, want) == NULL) {
+        free(body);
+        sprintf(reason, "the download is not SaveSync %s", tag);
+        update_failed(reason);
+        return 0;
+    }
+    sprintf(tmp, "%s/update.c", g_work);
+    sprintf(dir, "%s/scripts/universal", g_root);
+    sprintf(target, "%s/savesync.c", dir);
+    sd_mkdirs(g_work);
+    FILE* f   = fopen(tmp, "wb");
+    int wrote = -1;
+    if (f != NULL) {
+        wrote = fwrite(body, 1, n, f);
+        if (fclose(f) != 0) {
+            wrote = -1;
+        }
+    }
+    free(body);
+    if (wrote != n || sd_mkdirs(dir) != 0 || !install_script(tmp, target)) {
+        remove(tmp);
+        update_failed("the script could not be written to the SD card");
+        return 0;
+    }
+    sprintf(text, "Updated to %s. Run savesync again to use it.", tag);
+    script_log(text);
+    gui_message(text);
+    return 1;
 }
 
 #ifndef SAVESYNC_NO_MAIN

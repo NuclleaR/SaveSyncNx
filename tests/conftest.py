@@ -76,7 +76,7 @@ def dav(tmp_path):
     server.stop()
 
 
-def _run(source, answers, sd_dir, cat, tmp):
+def _run(source, answers, sd_dir, cat, tmp, faults=None):
     tmp.mkdir(parents=True, exist_ok=True)
     script = tmp / "script.c"
     script.write_text(source)
@@ -89,7 +89,7 @@ def _run(source, answers, sd_dir, cat, tmp):
         result_file.unlink()
     proc = subprocess.run(
         [str(HOSTRUN), "--catalog", str(catalog_file), "--answers", str(answers_file),
-         "--result", str(result_file), str(script)],
+         "--result", str(result_file), *(faults or []), str(script)],
         cwd=sd_dir, capture_output=True, text=True, timeout=300,
     )
     if not result_file.exists():
@@ -109,7 +109,10 @@ def _defines(koofr_url, defines):
     lines = []
     if koofr_url is not None:
         lines.append(f'#define KOOFR_URL "{koofr_url}"')
-    for name, value in (defines or {}).items():
+    # A test never reaches the real GitHub: unless it serves its own fakes, the
+    # update URLs point at a port nothing listens on.
+    defines = {"GITHUB_API": "http://127.0.0.1:9/no-github", "GITHUB_RAW": "http://127.0.0.1:9/no-github", **(defines or {})}
+    for name, value in defines.items():
         lines.append(f'#define {name} "{value}"')
     return "\n".join(lines) + "\n"
 
@@ -119,9 +122,9 @@ def run_raw(sd, catalog, tmp_path):
     """Run an arbitrary script source."""
     counter = {"n": 0}
 
-    def run(source, answers=None):
+    def run(source, answers=None, faults=None):
         counter["n"] += 1
-        return _run(source, answers, sd, catalog, tmp_path / f"run{counter['n']}")
+        return _run(source, answers, sd, catalog, tmp_path / f"run{counter['n']}", faults)
 
     return run
 
@@ -130,7 +133,7 @@ def run_raw(sd, catalog, tmp_path):
 def run_unit(run_raw):
     """Run `body` as main() of a script that includes savesync.c without its main."""
 
-    def run(body, prelude="", koofr_url=None, answers=None, defines=None):
+    def run(body, prelude="", koofr_url=None, answers=None, defines=None, faults=None):
         source = (
             _defines(koofr_url, defines)
             + "#define SAVESYNC_NO_MAIN 1\n"
@@ -140,7 +143,7 @@ def run_unit(run_raw):
             + body
             + "\n    return 0;\n}\n"
         )
-        return run_raw(source, answers)
+        return run_raw(source, answers, faults)
 
     return run
 
@@ -158,10 +161,13 @@ def seed_vault(run_unit):
 
 @pytest.fixture
 def run_script(run_raw):
-    """Run savesync.c itself (its own main) against the given server URL."""
+    """Run savesync.c itself (its own main) against the given server URL.
 
-    def run(answers, koofr_url, defines=None):
+    `faults` are extra hostrun flags, e.g. ["--abort-during", "unzip"].
+    """
+
+    def run(answers, koofr_url, defines=None, faults=None):
         source = _defines(koofr_url, defines) + f'#include "{SAVESYNC}"\n'
-        return run_raw(source, answers)
+        return run_raw(source, answers, faults)
 
     return run

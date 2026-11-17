@@ -60,7 +60,7 @@
 | Update: latest | `SaveSync <version> is the latest version.` |
 | Update: offer | `Update SaveSync from <current> to <new>?\n\nThe new version runs from the next start.` |
 | Update: done | `Updated to <new>. Run savesync again to use it.` |
-| Update: failed | `Could not update: <reason>.\nNothing was changed.` with reason `GitHub could not be reached (<code>)` or `the download is not SaveSync <new>` |
+| Update: failed | `Could not update: <reason>.\nNothing was changed.` with reason `GitHub could not be reached (<code>)` or `the download is not SaveSync <new>`; also `GitHub's answer names no release` and `the script could not be written to the SD card` (Task 12 Deviations) |
 | Keyboards | `Koofr email` · `Koofr app password` · `Profile name (A-Z, 0-9, space, - or _)` |
 | Bad profile name | `Use 1-24 Latin letters, digits, spaces, - or _.` |
 | Duplicate profile | `That name is already in the list.` |
@@ -74,13 +74,15 @@
 | Run stops: network | `No connection to Koofr. Check Wi-Fi.` |
 | Run stops: 401/403 | `Koofr rejected the login. Check email and app password in Settings.` |
 | Run stops: 507 | `Koofr storage is full.` |
+| Run stops: the folders cannot be made for another reason | `Koofr answered HTTP <code>.` |
 | Summary | `Backup done: <u> uploaded, <n> unchanged, <f> failed.` |
 | Restore: nothing | `There are no backups in Koofr for the games on this console.` |
-| Restore: game list | prompt `Pick a game`, plus `\n(<k> more in Koofr have no save on this console)` when k > 0; device entries `<name> (device)` |
+| Restore: game list | prompt `Pick a game`, plus `\n(<k> more in Koofr have no save on this console;\nstart a game once to create its save)` when k > 0 (the hint added in the final review, as the spec asks); device entries `<name> (device)` |
 | Restore: versions | prompt `Pick a version of <name>` |
 | Restore: confirm | `Download\n<version>\ninto Checkpoint's backup folder for\n<name>?\n\nNothing is written to the game until\nyou restore it in Checkpoint.` |
 | Restore: done | `Downloaded. Pick it in Checkpoint's backup\nlist for this game and press Restore.\nFor an account save, select the right\nprofile first.` |
 | Restore: failed | `The download failed and was removed.\nNothing was changed.` |
+| Restore: game folder without versions | `There are no versions of <name> in Koofr.` (Task 11 Deviations) |
 
 ## Review Focus
 
@@ -432,17 +434,17 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
   - After every save, `backup_run` checks `g_fatal`. A fatal error stops the loop with the matching run-stop copy, and the summary is not shown.
   - Any other failure counts that save as failed, leaves its state untouched and goes on to the next save.
 
-- [ ] **Step 1: Write `tests/test_errors.py`.**
+- [x] **Step 1: Write `tests/test_errors.py`.**
   - `test_wrong_login_stops_run` (copy shown; no PUT)
   - `test_quota_full_stops_run`
   - `test_network_down_stops_run` (`dav.stop()` before the run)
   - `test_one_failed_put_fails_only_that_game` (`fail_next("PUT", 500, path_contains=<id>)`: `1 uploaded, 0 unchanged, 1 failed`)
   - `test_failed_game_retried_next_run`
   - `test_unopenable_save_counts_failed` (catalog entry without `dir`)
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** (owner's go-ahead): `feat: stop on login, network and quota errors`
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** (owner's go-ahead): `feat: stop on login, network and quota errors`
 
 ### Task 11: Restore
 
@@ -463,7 +465,7 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
     5. Destination: `title_backup_path(idx,0)` + the version without `.zip`; if it exists, ` (2)`, ` (3)` and so on. Then `sd_mkdirs` and `unzip`.
     6. On any failure: `sd_rmtree(dest)` and the failed copy. Delete `down.zip` either way.
 
-- [ ] **Step 1: Write `tests/test_restore.py`.** Server content is seeded straight into `dav.root`.
+- [x] **Step 1: Write `tests/test_restore.py`.** Server content is seeded straight into `dav.root`.
   - `test_lists_only_games_on_console` (prompt mentions `1 more in Koofr`)
   - `test_versions_newest_first_no_cap` (200 versions listed, first is the newest)
   - `test_restore_bytes_identical`
@@ -474,10 +476,10 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
   - `test_cancel_at_confirm_writes_nothing`
   - `test_restore_nonascii_game`
   - `test_restore_never_writes_saves` (`save_writes == []`)
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** (owner's go-ahead): `feat: restore any version into Checkpoint's folder`
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** (owner's go-ahead): `feat: restore any version into Checkpoint's folder`
 
 ### Task 12: Update from GitHub releases
 
@@ -495,7 +497,7 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
   5. `rename` it over `<root>/scripts/universal/savesync.c` (`sd_mkdirs` the folder first), then the done copy.
 - `run_script` passes `GITHUB_API`/`GITHUB_RAW` defines that point at `dav.url`'s host with static routes.
 
-- [ ] **Step 1: Write `tests/test_update.py`.**
+- [x] **Step 1: Write `tests/test_update.py`.**
   - `test_latest_version_says_so`
   - `test_offer_shows_both_versions` (prompt has `v0.1.0` and `v0.2.0`)
   - `test_confirm_replaces_script` (file content equals the served bytes)
@@ -503,10 +505,10 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
   - `test_wrong_payload_rejected` (body without the version line: failed copy, installed file unchanged, no `savesync/update.c` left)
   - `test_github_unreachable` (`static` 500: failed copy with `(500)`)
   - `test_user_agent_sent` (the fake records the request headers)
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** (owner's go-ahead): `feat: self-update from GitHub releases`
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** (owner's go-ahead): `feat: self-update from GitHub releases`
 
 ### Task 13: README and the console check
 
@@ -536,9 +538,9 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
 - Update script once a newer release exists.
 - Are fully deleted games in Checkpoint's list? (Open item 1)
 
-- [ ] **Step 1: Write both files.**
-- [ ] **Step 2: Run** `make test`. Expected: all PASS.
-- [ ] **Step 3: Commit** (owner's go-ahead): `docs: README and console checklist`
+- [x] **Step 1: Write both files.**
+- [x] **Step 2: Run** `make test`. Expected: all PASS.
+- [x] **Step 3: Commit** (owner's go-ahead): `docs: README and console checklist`
 - [ ] **Step 4: The owner runs `docs/console-check.md` on the Switch.** Record the results and any fixes here under Deviations, and answer the spec's Open item 1.
 
 ## Deviations
@@ -573,11 +575,44 @@ def test_save_writes_recorded(run_raw, catalog): ...; assert r.save_writes == ["
 - **Task 7 — folders in the fingerprint:** "one line per entry" includes the folder entries `zip_dir` writes (`dir/`, size 0, CRC 0), so adding or removing an empty folder in a save counts as a change. The spec speaks of files; a save's empty folder is part of what Checkpoint would restore, so it stays in.
 - **Task 7 — `state_set` on the Switch:** its FAT `rename` does not replace an existing file, so when the rename is refused the old file is removed and the rename retried. If a run stops between the two, `state_load` reads the `.tmp` file instead. `state_set` loads the state first if nobody did, so it can never write a file with one line.
 - **Task 7 — helpers and tests beyond the plan:** `names_init`, `sort_names` (Restore reuses it), `le16`/`le32`, `read_at`; `test_not_a_zip_is_an_error`, `test_leftover_tmp_is_recovered`, and a Python cross-check (`zipfile` + `zlib.crc32`) of the fingerprint format in `test_same_tree_same_fingerprint` and `test_fingerprint_stable_with_subfolders`.
-- **Task 8 — the folder URLs** are globals set by `cloud_prepare`: `g_url_root`, `g_url_saves`, `g_url_device`, `g_url_incoming` (`URLN` each, since globals share picoc's 64 KB heap).
+- **Task 8 — the folder URLs** are globals set by `cloud_prepare`: `g_url_root`, `g_url_saves`, `g_url_device`, `g_url_incoming` (`URLN` each). Corrected in the final review: picoc allocates globals with `calloc` (`HeapAllocMem`), so they do not use the 64 KB picoc stack; only locals do.
 - **Task 8 — `stamp_from_date`** reads only the HTTP date form (`Thu, 12 Nov 2026 18:45:01 GMT`, day of 1–2 digits) and checks the ranges; anything else falls back to the console clock with the log line `version time: console clock (Koofr sent no Date)`.
 - **Task 8 — name clashes** retry up to `(999)`; past that the upload fails rather than loop forever on a server that answers 412 to everything. A MOVE answered 204 counts as done, like 201.
-- **Task 8 — a dropped connection** (fakedav `drop_next`) reaches the script as a transfer error, so it also sets `FATAL_NET`; the backup run (Task 10) then stops. Test beyond the plan: `test_stamp_from_date_parses_and_refuses`.
+- **Task 8 — a dropped connection** (fakedav `drop_next`) reaches the script as a transfer error, so it also sets `FATAL_NET`; the backup run (Task 10) then checks whether Koofr still answers (final review fix pass). Test beyond the plan: `test_stamp_from_date_parses_and_refuses`.
 - **Task 9 — shape of `backup_run`:** one `backup_entry` per catalog entry. The dump folder is deleted right after zipping (spec step 3.2), the zip after the entry. A save that cannot be opened, copied or zipped counts as failed; Task 10 adds the stop on fatal errors. `g_fatal` is cleared at the start of the run.
 - **Task 9 — log and status:** `backup as <profile>` at the start, then one line per game (`<folder>:` plus `unchanged`, `uploaded <file>` or the failure), and the summary also goes to the log, as the spec asks. The status reads `Connecting to Koofr...` until the folders are ready, then `Koofr: <email>` again.
 - **Task 9 — Task 6's tests** now check `backup as <name>` and answer the summary message, instead of the `backup: <name>` stub.
-- **Open, raised 2026-11-13:** 3DSaveSync found that Koofr accepts `*.bin` files (PUT 201) but serves them back empty. SaveSyncNx uploads `.zip` only, which nobody has tested on Koofr, and nothing checks an upload after it lands. Proposed to the owner: before the MOVE, download the `.incoming` file again and compare its size and fingerprint; on a mismatch, DELETE it there and count the save as failed. Not decided yet.
+- **Task 10 — where the run checks for a stop:** after the folders are made, after the `.incoming/` cleanup and after every save. The stop copy also goes to the log; the save that hit the error is not stored as uploaded, so the next run retries it.
+- **Task 10 — the folders cannot be made for another reason** (MKCOL answered e.g. 500 or 409): the plan had no copy for it and the run used to end with no message at all. It now stops with `Koofr answered HTTP <code>.`, the copy Settings' test already uses for other statuses (`g_status` keeps the last response's status). Test `test_server_error_at_start_says_so`.
+- **Task 10 — tests beyond the plan:** `test_forbidden_stops_run` (403), `test_network_lost_mid_run_stops_run` (a dropped PUT on the first game: the second is never sent), `test_dropped_move_retried_next_run` (Review Focus 2: the run stops, one file is left in `.incoming/`, the next run deletes it and uploads the save). `test_one_failed_put_fails_only_that_game`, `test_failed_game_retried_next_run` and `test_unopenable_save_counts_failed` passed before the change: Task 9's `backup_entry` already counted those failures and left the state alone.
+- **Task 11 — helpers:** no `sort_desc` and no `sd_rmtree`. The versions are sorted with Task 7's `sort_names` and read backwards; a failed restore removes its folder with Task 4's `rm_tree` plus `rmdir`. `cloud_prepare` is split so that Restore gets the folder URLs (`cloud_urls`) without making folders. Checkpoint's picoc has no `toupper` without `<ctype.h>`, so the title id is uppercased by hand.
+- **Task 11 — what Restore lists:** a `saves/` or `device/` folder Koofr does not have yet (404) counts as empty; any other listing failure stops with the run-stop copy (Task 10's `show_stop`). Games appear in catalog order, account before device when the catalog does. `k` counts distinct title ids per kind. The `(k more …)` line first left out the spec's hint that a game must be started once to create its save; the final review restored it (see the Copy table).
+- **Task 11 — where B leads:** confirm → back to the versions, versions → back to the games, games → the run ends. The plan did not say; one step back is the usual Checkpoint behaviour.
+- **Task 11 — a game folder with no versions** (left by a run that stopped between the game folder's MKCOL and the MOVE) shows `There are no versions of <name> in Koofr.` and goes back to the games. New copy; the plan had none for this case.
+- **Task 11 — labels:** the version prompt and the confirm copy use the game's label, so a device save reads `Game One (device)` there too. The status reads `Downloading from Koofr...` during the GET.
+- **Task 11 — order of a restore:** the free folder name is chosen first, the zip is downloaded, and only then is the folder made and unzipped into. A failed download creates no folder at all. Changed in the final review: the zip is unzipped into `savesync/restore` and renamed into place (see below).
+- **Task 11 — tests beyond the plan:** `test_no_backups_says_so`, `test_download_error_rolls_back`, `test_game_folder_without_versions` (written after the code), `test_restore_network_down`. Task 6's `test_restore_and_settings_entries` now answers the real Restore's "no backups" message instead of checking the `restore` stub.
+- **Task 12 — two more failure reasons,** for cases the plan's two did not cover:
+  - `GitHub's answer names no release`: the API answered 200 but with no `tag_name`, or with a tag that is not 1–31 of `A-Z a-z 0-9 . - _`. The tag goes into the raw URL's path, so `../x` is refused.
+  - `the script could not be written to the SD card`: the download could not be written or moved into place.
+  A repo with no release yet answers 404, which reads `GitHub could not be reached (404)`.
+- **Task 12 — the check is made in memory,** before anything is written: only a body that holds `#define SAVESYNC_VERSION "<tag>"` is written to `savesync/update.c` and renamed into place.
+- **Task 12 — FAT rename:** `install_script` tries a plain `rename` first (it replaces on the PC). If that is refused, it moves the installed script aside to `savesync/installed.old`, renames the new one in, and moves the old one back if that fails. The PC tests reach only the first branch; the console check covers the second.
+- **Task 12 — test safety:** `conftest.py` points `GITHUB_API` and `GITHUB_RAW` at `http://127.0.0.1:9/no-github` unless a test serves its own fakes, so no test ever reaches the real GitHub. Task 6's `test_update_entry_returns_to_dialog` now answers the "could not be reached" message instead of checking the `update` stub.
+- **Task 12 — fakedav** records every request's headers in `.request_headers` (`test_user_agent_sent` checks `User-Agent: savesync` and that no `Authorization` header goes to GitHub). Tests beyond the plan: `test_confirm_installs_when_folder_missing`, `test_no_release_yet`, `test_download_unreachable`, `test_release_without_usable_tag` (written after the code).
+- **Task 13 — README:** the "hidden games" limitation is written as what is known: only the games in Checkpoint's list for the selected user are backed up. Added two lines the plan did not list: what is checked of an upload after it lands (see the owner's decision below), and the free SD space a run needs. Releasing names a published release, not a draft or pre-release, which `releases/latest` does not return.
+- **Task 13 — `docs/console-check.md`** adds checks beyond the plan's list: the vault holds no readable login, a downloaded zip opens on a PC (the Koofr empty-file question for `.zip`), Wi-Fi off, `savesync/` empty after a run, restoring the same version twice, and the FAT branch of the update's rename.
+- **Raised 2026-11-13, decided by the owner the same day:** 3DSaveSync found that Koofr accepts `*.bin` files (PUT 201) but serves them back empty. SaveSyncNx uploads `.zip` only, which nobody has tested on Koofr. The owner chose the cheaper of the two checks offered: before the MOVE, PROPFIND (Depth 0) the `.incoming` file and compare `getcontentlength` with the local zip's size; on a mismatch DELETE it and count the save as failed (`dav_size`, `sd_size`). Downloading it again was declined (it doubles the traffic). Tests `test_upload_size_checked_before_move`, `test_short_stored_upload_fails_and_is_removed`; fakedav `short_next_put`.
+
+### Final review fix pass (2026-11-13)
+
+The whole-project review found one critical and two important defects; the owner answered four questions. Each change below has a test that failed first.
+
+- **Hold-B during Restore's unzip** (critical) left a half-written folder in Checkpoint's backup list: picoc stops at the next statement after an abort, so the cleanup after `unzip` never ran. `restore_version` now unzips into `savesync/restore` and renames it into place; the rename is the commit point, and `savesync/` is emptied at every start. hostrun gained `--abort-during <zip|unzip>`, which wraps `ScriptConsole::beginIo`/`addIo` and raises Checkpoint's abort on the binding's first progress tick. Test `test_abort_during_unzip_leaves_no_folder`.
+- **`dav_list` passed `.` and `..` on:** a listing naming them made the cleanup send `DELETE .incoming/..`, which removed `SaveSyncNx/` with every version (the RED run showed it). They are skipped now. fakedav gained `extra_hrefs`. Test `test_cleanup_skips_dot_entries`.
+- **Unchecked `fclose`** in `dav_get_file`, `vault_write`, `profiles_save`, `dump_dir` and `update_flow`: a failed final flush counts as a short write. A failing `profiles_save` is logged (`the profile names could not be saved`); the backup still runs under the typed name. hostrun gained `--fail-close <path part>` (wraps `fopen`/`fclose`). Tests `test_unflushed_download_rolls_back`, `test_unflushed_vault_refused`, `test_unflushed_profiles_reported`, `test_unflushed_dump_counts_failed`, `test_unflushed_download_keeps_installed`.
+- **Restore's game list** now carries the spec's hint (`start a game once to create its save`).
+- **Owner: non-Latin game names.** Checkpoint names such a folder `0x<ID> 0x<ID>`; `game_folder` now builds the cloud folder from `0x<ID> ` + the title name for any title with a non-ASCII byte. ASCII titles keep Checkpoint's folder name. Tests `test_nonascii_title_folder_keeps_its_name`, `test_ascii_title_folder_is_checkpoints`; `test_restore_nonascii_game` became `test_restore_special_names` (also `Luigi's Mansion 3 & #1 50%`, a coverage gap the review named; it passed at once).
+- **Owner: one failed transfer.** After a transfer error or a 401/403 in the middle of a run, `recheck_koofr` sends one PROPFIND (Depth 0) of `SaveSyncNx/`; on 207 only that save fails and the run goes on, otherwise it stops with the reason. Never for 507. `test_network_lost_mid_run_stops_run` now loses the network for good (fakedav `fail_from`); `test_dropped_move_retried_next_run` now expects `1 uploaded, 0 unchanged, 1 failed`, then `1 uploaded, 1 unchanged`. New tests `test_login_lost_mid_run_stops_run`, `test_one_dropped_put_fails_only_that_game`, `test_one_forbidden_put_fails_only_that_game`; `test_quota_full_stops_run` checks that no recheck is sent.
+- **Owner: a fresh install** stays as designed (the first run backs up; Restore from the second run). README says so under Limitations.
+- **Docs:** `docs/console-check.md` — the wrong-password line now expects the connection test's 401 message after typing, then the run-stop message; new lines for hold-B during the unzip, a name with `'`/`&`/`#`/`%`, a non-Latin name, Wi-Fi lost mid-run and a fresh install. The README has a "When something fails" paragraph, and the Stopping paragraph covers Restore.

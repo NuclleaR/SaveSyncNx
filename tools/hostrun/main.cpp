@@ -2,7 +2,11 @@
  * hostrun: run a Checkpoint script on the PC, in Checkpoint's own interpreter
  * and bindings, against a fake console.
  *
- *   hostrun --catalog <catalog.json> --answers <answers.json> --result <result.json> <script.c>
+ *   hostrun --catalog <catalog.json> --answers <answers.json> --result <result.json>
+ *           [--abort-during <zip|unzip>] [--fail-close <path part>] <script.c>
+ *
+ * --abort-during presses hold-B while that binding runs; --fail-close makes
+ * fclose fail for files whose path contains the part (see faults.hpp).
  *
  * The working directory is the fake SD card: it holds a real directory named
  * "sdmc:", so "sdmc:/switch/Checkpoint/..." resolves inside it. The script runs
@@ -17,6 +21,7 @@
 
 #include "capture.hpp"
 #include "fakehost.hpp"
+#include "faults.hpp"
 #include "json.hpp"
 #include "scriptrunner.hpp"
 #include "thread.hpp"
@@ -113,6 +118,12 @@ int main(int argc, char** argv)
         if ((arg == "--catalog" || arg == "--answers" || arg == "--result") && i + 1 < argc) {
             (arg == "--catalog" ? catalogPath : arg == "--answers" ? answersPath : resultPath) = argv[++i];
         }
+        else if (arg == "--abort-during" && i + 1 < argc) {
+            Faults::abortDuring(argv[++i]);
+        }
+        else if (arg == "--fail-close" && i + 1 < argc) {
+            Faults::failClose(argv[++i]);
+        }
         else if (scriptPath.empty() && arg.rfind("--", 0) != 0) {
             scriptPath = arg;
         }
@@ -122,7 +133,8 @@ int main(int argc, char** argv)
         }
     }
     if (catalogPath.empty() || answersPath.empty() || resultPath.empty() || scriptPath.empty()) {
-        fprintf(stderr, "usage: hostrun --catalog <catalog.json> --answers <answers.json> --result <result.json> <script.c>\n");
+        fprintf(stderr, "usage: hostrun --catalog <catalog.json> --answers <answers.json> --result <result.json>\n"
+                        "               [--abort-during <zip|unzip>] [--fail-close <path part>] <script.c>\n");
         return RUNNER_ERROR;
     }
 

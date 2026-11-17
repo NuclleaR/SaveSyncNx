@@ -79,6 +79,30 @@ def test_upload_creates_version(run_unit, dav):
     assert moves and all(e[2] == 201 for e in moves)
 
 
+def test_upload_size_checked_before_move(run_unit, dav):
+    dav.fixed_date = DATE
+    r = run(run_unit, dav, upload_call())
+    assert values(r.output, "up") == ["1"], r.output
+    inc = f"/dav/Koofr/SaveSyncNx/.incoming/0100ABCD00000000-a-{STAMP}.zip"
+    calls = [(m, p) for m, p, _ in dav.request_headers if p == inc]
+    assert calls == [("PUT", inc), ("PROPFIND", inc), ("MOVE", inc)]
+    [depth] = [h.get("Depth") for m, p, h in dav.request_headers if m == "PROPFIND" and p == inc]
+    assert depth == "0"
+
+
+def test_short_stored_upload_fails_and_is_removed(run_unit, dav):
+    # Koofr answers the PUT 201 but keeps fewer bytes: never MOVE it into place
+    dav.fixed_date = DATE
+    dav.short_next_put(0)
+    r = run(run_unit, dav, upload_call())
+    assert r.exit == 0, r.output
+    assert values(r.output, "up") == ["0"]
+    assert "upload: Koofr holds 0 of 8 bytes" in r.output
+    assert incoming(dav) == []
+    assert not (dav.root / "SaveSyncNx" / "saves" / GAME).exists()
+    assert [e for e in dav.log if e[0] == "MOVE"] == []
+
+
 def test_upload_never_overwrites(run_unit, dav):
     dav.fixed_date = DATE
     folder = dav.root / "SaveSyncNx" / "saves" / GAME
@@ -148,3 +172,21 @@ def test_only_incoming_is_deleted(run_unit, dav):
     deletes = [e for e in dav.log if e[0] == "DELETE"]
     assert len(deletes) == 2
     assert all(e[1].startswith("/dav/Koofr/SaveSyncNx/.incoming/") for e in deletes)
+
+
+def test_cleanup_skips_dot_entries(run_unit, dav):
+    # a listing naming "." or ".." must not turn into DELETE .incoming/..,
+    # which a client resolves to SaveSyncNx/ itself
+    root = dav.root / "SaveSyncNx"
+    (root / ".incoming").mkdir(parents=True)
+    (root / ".incoming" / "a.zip").write_bytes(b"1")
+    (root / "saves" / GAME).mkdir(parents=True)
+    (root / "saves" / GAME / "keep.zip").write_bytes(b"3")
+    dav.extra_hrefs["SaveSyncNx/.incoming"] = [
+        "/dav/Koofr/SaveSyncNx/.incoming/..", "/dav/Koofr/SaveSyncNx/.incoming/%2E%2E",
+        "/dav/Koofr/SaveSyncNx/.incoming/.", "/dav/Koofr/SaveSyncNx/.incoming/%2e/"]
+    r = run(run_unit, dav, 'cloud_prepare();\n    cloud_cleanup_incoming();')
+    assert r.exit == 0, r.output
+    assert (root / "saves" / GAME / "keep.zip").read_bytes() == b"3"
+    assert incoming(dav) == []
+    assert [e[1] for e in dav.log if e[0] == "DELETE"] == ["/dav/Koofr/SaveSyncNx/.incoming/a.zip"]

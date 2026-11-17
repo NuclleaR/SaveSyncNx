@@ -28,9 +28,9 @@ def backup(run_script, dav, seed_vault, sd):
     profiles = sd / APP_ROOT / "config" / "savesync-profiles.txt"
     profiles.write_text("Serhii\nSon\n")
 
-    def run(profile="Serhii", date=DATE1):
+    def run(profile="Serhii", date=DATE1, faults=None):
         dav.fixed_date = date
-        r = run_script([{"kind": "PickOne", "item": profile}, {"kind": "Message"}], koofr_url=dav.url)
+        r = run_script([{"kind": "PickOne", "item": profile}, {"kind": "Message"}], koofr_url=dav.url, faults=faults)
         assert r.exit == 0, r.output
         assert r.save_writes == []
         return r
@@ -133,6 +133,33 @@ def test_lost_state_reuploads_once(backup, catalog, dav, sd):
     assert backup(date=DATE2).ui[-1]["prompt"] == summary(2, 0, 0)
     assert backup(date="Sat, 14 Nov 2026 10:00:00 GMT").ui[-1]["prompt"] == summary(0, 2, 0)
     assert zips(dav, "saves", F1) == [f"{STAMP1} Serhii.zip", f"{STAMP2} Serhii.zip"]
+
+
+def test_nonascii_title_folder_keeps_its_name(backup, catalog, dav, sd):
+    # Checkpoint names its own folder "0x<ID> 0x<ID>" for such a title; the
+    # cloud folder keeps the real name, made safe, so people can find it in Koofr
+    tid = "0100000000004000"
+    catalog.add(tid, "ポケモン: Let's Go/Eevee.", "account", {"/save.bin": b"p"})
+    r = backup()
+    assert r.ui[-1]["prompt"] == summary(1, 0, 0)
+    assert (sd / APP_ROOT / "saves" / f"0x{tid} 0x{tid}").is_dir()
+    assert zips(dav, "saves", f"0x{tid} ポケモン_ Let's Go_Eevee_") == [f"{STAMP1} Serhii.zip"]
+
+
+def test_ascii_title_folder_is_checkpoints(backup, catalog, dav):
+    tid = "0100000000005000"
+    catalog.add(tid, "Luigi's Mansion 3 & #1 50%. Go!", "account", {"/save.bin": b"l"})
+    backup()
+    assert zips(dav, "saves", f"0x{tid} Luigi's Mansion 3 & #1 50%  Go") == [f"{STAMP1} Serhii.zip"]
+
+
+def test_unflushed_dump_counts_failed(backup, catalog, dav):
+    # the SD card fails the final flush of a copied save file: the copy may
+    # be short, so it must not become a version
+    catalog.add(G1[0], G1[1], "account", {"/save.bin": b"one"})
+    r = backup(faults=["--fail-close", "savesync/dump/"])
+    assert r.ui[-1]["prompt"] == summary(0, 0, 1)
+    assert zips(dav, "saves", F1) == []
 
 
 def test_empty_save_skipped(backup, catalog, dav):

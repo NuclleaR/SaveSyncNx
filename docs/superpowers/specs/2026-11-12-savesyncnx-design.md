@@ -107,6 +107,10 @@ These make the script a failure even if everything else works:
 | Delivery | First copy by hand; then "Update script..." from the latest GitHub release, on confirm (the repo is public; the owner accepted that Checkpoint does not verify HTTPS certificates) |
 | PC tests | The real Checkpoint 5.3.0 interpreter and bindings on the PC with a fake console and a fake Koofr; pytest, installed by mise from the repo's `mise.toml` |
 | Version control | git, remote `git@github.com:NuclleaR/SaveSyncNx.git`; commits only on the owner's go-ahead, no AI attribution |
+| Fresh install (2026-11-13) | Stays as designed: with no profile names the first run goes to the keyboard and backs up; Restore is reachable from the second run |
+| Non-Latin game names (2026-11-13) | The cloud folder is `0x<TITLEID> ` + the real title name, not Checkpoint's `0x<ID> 0x<ID>` |
+| One failed transfer (2026-11-13) | After a transfer error or 401/403 in the middle of a run, check whether Koofr still answers; if it does, only that save fails and the run goes on (never for 507) |
+| Upload check (2026-11-13) | Before the MOVE, compare the size Koofr reports for the uploaded file with the local zip; on a mismatch delete it from `.incoming/` and fail the save |
 
 ## Constraints found during research (2026-11-12)
 
@@ -191,7 +195,10 @@ SaveSyncNx/.incoming/<unique>.zip                    uploads in progress
 ```
 
 - Game folders are named like Checkpoint's own (`0x%016llX` + space + the name Checkpoint uses).
-  Restore identifies a game by the `0x<TITLEID>` part only; the name is for people browsing Koofr.
+  For a title with any non-ASCII byte Checkpoint uses the id as the name (`0x<ID> 0x<ID>`); its cloud
+  folder takes the real title name instead, with `/ \ : * ? " < > |` and control characters made `_`
+  (owner, 2026-11-13). Restore identifies a game by the `0x<TITLEID>` part only; the name is for
+  people browsing Koofr.
   If a game's name changes, new versions go to a new folder with the same id, and Restore shows the
   versions of both folders as one game.
 - **Version name**: `YYYYMMDD-HHMMSS` in UTC, from the `Date` header of a Koofr response, not the
@@ -241,7 +248,9 @@ Free space needed on SD during a run: about twice the largest single save.
 
 A version is uploaded under a name that does not exist yet and becomes visible only when complete:
 
-1. PUT the zip to `SaveSyncNx/.incoming/<unique name>.zip`.
+1. PUT the zip to `SaveSyncNx/.incoming/<unique name>.zip`. Then PROPFIND (Depth 0) that file: if
+   the `getcontentlength` Koofr reports is not the local zip's size, DELETE it and fail the save
+   (owner, 2026-11-13; 3DSaveSync found Koofr answering a PUT 201 and serving `*.bin` back empty).
 2. MOVE it to `SaveSyncNx/<saves|device>/0x<TITLEID> <name>/<version>.zip` with `Overwrite: F`
    (creating the game folder first if needed). **This is the completion point.** 412 (name taken) →
    the next free name (`<version> (2)`, `(3)`, …) and MOVE again. Never overwrite.
@@ -257,13 +266,17 @@ A version is uploaded under a name that does not exist yet and becomes visible o
    and that a game must be started once to create its save (designer's call).
 2. Pick a game → its versions, newest first (sorted by name, which is UTC time), each showing its
    profile name.
-3. Confirm → download the zip to a temporary file → `unzip` it (CRCs checked) into
-   `title_backup_path(idx, kind)/<version name>`; if that folder exists, `<version name> (2)`, `(3)`,
-   …. Never write into an existing folder.
-4. On any failure (network, CRC, cancel) remove the folder this download created, so Checkpoint
-   never offers a half-written backup. Delete the temporary zip either way.
+3. Confirm → download the zip to a temporary file → `unzip` it (CRCs checked) into a temporary
+   folder on SD, then rename that folder to `title_backup_path(idx, kind)/<version name>`; if that
+   folder exists, `<version name> (2)`, `(3)`, …. Never write into an existing folder.
+4. On any failure (network, CRC, cancel) nothing reaches Checkpoint's folder, so Checkpoint never
+   offers a half-written backup: hold-B stops the script at the next statement, so only the rename
+   after a whole unzip may put the folder in place (found in the final review). Delete the temporary
+   zip and folder; whatever hold-B leaves of them goes at the next run's start.
 5. Tell the owner the version is now in Checkpoint's backup list for that game, to be written into
    the game with Checkpoint's Restore (with the right profile selected for an account save).
+6. B goes back one step: from the confirm to the versions, from the versions to the games; from the
+   games it ends the run (designer's call).
 
 ### Update
 
@@ -288,11 +301,18 @@ only when the owner presses Update, and only from releases the owner published.
 ### Errors
 
 - No network, login rejected (401/403), storage full (507): stop the run with a plain message, in the
-  spirit of 3DSaveSync's texts.
+  spirit of 3DSaveSync's texts. In the middle of a run, a transfer error or a 401/403 first gets one
+  PROPFIND (Depth 0) of `SaveSyncNx/`: if Koofr answers it (207), that save alone fails and the run
+  goes on; otherwise the run stops with the reason. A 507 always stops at once (owner, 2026-11-13:
+  curl gives up below 300 B/s for 10 s, so one slow file would otherwise stop every run at the same
+  game).
+- If the cloud folders cannot be made at the start for any other reason, the run stops with the HTTP
+  status Koofr answered (designer's call).
 - Anything else fails only that save; the run goes on, the save is counted as failed, its stored
   fingerprint is left unchanged (so the next run retries it).
-- Hold B (Checkpoint's abort) at any moment leaves: nothing changed in any save; at most one
-  unfinished upload in `.incoming/` (deleted next run); temporary files on SD (deleted next run).
+- Hold B (Checkpoint's abort) at any moment leaves: nothing changed in any save; no half-written
+  folder in Checkpoint's backup list; at most one unfinished upload in `.incoming/` (deleted next
+  run); temporary files on SD (deleted next run).
 
 ## Open items
 
